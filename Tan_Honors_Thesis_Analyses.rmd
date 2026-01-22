@@ -1,0 +1,573 @@
+---
+title: "Tan Honors Thesis Analyses"
+author: "Sally Tan"
+date: "2025-10-07"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Packages
+```{r}
+# List of required packages
+p_needed <- c(
+  "tidyverse", "lubridate", "stringi", "devtools", "ggmap", "GGally",
+  "mosaic", "lme4", "nlme", "ppcor", "knitr",
+  "rmarkdown", "markdown", "gee", "haven",
+  "psych", "foreign", "lavaan", "semPlot", "data.table", "pixiedust", "jmv", "tidyr", "Hmisc"
+)
+
+# Check which packages are already installed
+installed_packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% installed_packages)]
+
+# Install any missing packages
+if(length(p_to_install) > 0){
+  install.packages(p_to_install)
+}
+
+# Load all required packages
+invisible(lapply(p_needed, library, character.only = TRUE))
+```
+
+# Preparing Dataset
+```{r}
+##Reading Data
+thesis_full <- read.csv("/Users/students/Downloads/Thesis Data.csv")
+
+## Making a smaller dataset
+library(dplyr) 
+thesis_small <- thesis_full %>%
+  dplyr::select(CoupleID, Participant, Baseline_Condition, Gender, Sex, sexual_orientation, Baseline_age_R, education, Baseline_race_ethnicity_1, Baseline_race_ethnicity_2, Baseline_race_ethnicity_3, Baseline_race_ethnicity_4, Baseline_race_ethnicity_5, Baseline_race_ethnicity_6, Baseline_race_ethnicity_7, relationship_length_months, relationship_length_days, relationship_length_years, Baseline_vgse1, Baseline_vgse2, Baseline_vgse3, Baseline_vgse4, Baseline_vgse5,Baseline_vgse6, Baseline_vgse7, Baseline_vgse8, Baseline_vgse9, Baseline_vgse10,Baseline_vgse11, pos_imm_1, pos_imm_2, pos_imm_3, pos_imm_4)
+```
+
+## Cleaning Data
+```{r}
+# Create combined race column
+thesis_small$Baseline_race_ethnicity <- apply(
+  thesis_small[, c("Baseline_race_ethnicity_1", "Baseline_race_ethnicity_2",
+                   "Baseline_race_ethnicity_3", "Baseline_race_ethnicity_4",
+                   "Baseline_race_ethnicity_5", "Baseline_race_ethnicity_6",
+                   "Baseline_race_ethnicity_7")],
+  1,
+  function(x) paste(which(x == 1), collapse = ",")
+)
+
+# Create multi-racial category
+thesis_small <- thesis_small %>%
+  mutate(
+    Baseline_race_ethnicity = ifelse(grepl(",", Baseline_race_ethnicity), 
+                                     8, 
+                                     Baseline_race_ethnicity)
+  )
+
+#Contrast Coding Gender:  1= Male -1= Female 
+thesis_small$Sex_contrast <- ifelse(thesis_small$Sex == 1, 1, 
+                                    ifelse(thesis_small$Sex == 2, -1, NA))
+
+# Check the new variable
+table(thesis_small$Sex_contrast)
+
+
+# Dummy code race/ethnicity
+library(dplyr)
+
+thesis_small <- thesis_small %>%
+  mutate(
+    race_dum = if_else(Baseline_race_ethnicity == 1, 0, 1)
+  )
+
+# Replace Baseline Condition NAs with Touch (1)
+thesis_small <- thesis_small %>%
+  mutate(
+    Baseline_Condition = ifelse(is.na(Baseline_Condition), 1, Baseline_Condition)
+  )
+  
+# Video game efficacy: Reverse score 1-7 scale for item 1 & 3
+thesis_small$Baseline_vgse1 <- 8 - thesis_small$Baseline_vgse1
+thesis_small$Baseline_vgse3 <- 8 - thesis_small$Baseline_vgse3
+
+# Video game efficacy: Creating mean score
+thesis_small$Baseline_vgse_mean <- rowMeans(thesis_small[, paste0("Baseline_vgse", 1:11)], na.rm = TRUE)
+
+# VR Immersion: Creating mean score 
+thesis_small$pos_imm_mean <- rowMeans(thesis_small[, paste0("pos_imm_", 1:4)], na.rm = TRUE)
+
+#Combining relationship length columns into one 
+thesis_small <- thesis_small %>%
+  # Subtract 1 from each relationship length column
+  mutate(
+    relationship_length_days = relationship_length_days - 1,
+    relationship_length_months = relationship_length_months - 1,
+    relationship_length_years = relationship_length_years - 1
+  ) %>%
+  # Combine into total length in years
+  mutate(
+    total_relationship_years = relationship_length_years +
+                               relationship_length_months / 12 +
+                               relationship_length_days / 365
+  )
+```
+
+```{r}
+#Investigating the Number of odd-number participants 
+
+#Looking at number of unique couples 
+
+library(dplyr)
+
+# Count unique couples
+num_unique_couples <- length(unique(thesis_small$CoupleID))
+cat("Number of unique couples:", num_unique_couples, "\n")
+
+# Count total participants
+num_participants <- length(unique(thesis_small$Participant))
+cat("Number of participants:", num_participants, "\n")
+
+library(dplyr)
+
+thesis_small %>%
+  group_by(CoupleID) %>%
+  summarise(num_participants = n(),
+            participants = paste(Participant, collapse = ", ")) %>%
+  arrange(num_participants)
+
+thesis_small %>%
+  group_by(CoupleID) %>%
+  summarise(num_participants = n()) %>%
+  filter(num_participants != 2)
+
+thesis_small %>%
+  group_by(Participant) %>%
+  summarise(num_couples = n()) %>%
+  filter(num_couples > 1)
+
+library(dplyr)
+
+# Remove specific CoupleIDs
+thesis_small <- thesis_small %>%
+  filter(!CoupleID %in% c(235, 259, 310, 297))
+
+# Count unique couples
+num_unique_couples <- length(unique(thesis_small$CoupleID))
+cat("Number of unique couples:", num_unique_couples, "\n")
+
+# Count total participants
+num_participants <- length(unique(thesis_small$Participant))
+cat("Number of participants:", num_participants, "\n")
+
+library(dplyr)
+
+# Identify non-heterosexual couples
+non_hetero_couples <- thesis_small %>%
+  group_by(CoupleID) %>%
+  summarise(unique_sex = n_distinct(Sex)) %>%  # count unique Sex values per couple
+  filter(unique_sex == 1)                      # same Sex = non-heterosexual
+
+# Count the number of non-heterosexual couples
+num_non_hetero <- nrow(non_hetero_couples)
+cat("Number of non-heterosexual couples:", num_non_hetero, "\n")
+```
+
+```{r}
+#Descriptives 
+library(jmv)
+
+options(digits = 3)
+
+# 1) Participant Demographics for age, relationship legnth, VGSE, and immersion scores 
+descriptives(
+  data = thesis_small,
+  vars = c("Baseline_age_R", "total_relationship_years", "Baseline_vgse_mean", "pos_imm_mean", "race_dum",),
+  mean = TRUE, sd = TRUE, min = TRUE, max = TRUE
+)
+
+# For ethnicity.
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(forcats)
+
+# Separate rows if multiple races are listed
+ethnicity_long <- thesis_small %>%
+  separate_rows(Baseline_race_ethnicity, sep = ",")
+
+# Recode numeric ethnicity to descriptive labels
+ethnicity_long <- ethnicity_long %>%
+  mutate(
+    Baseline_race_ethnicity = recode(
+      Baseline_race_ethnicity,
+      "1" = "White",
+      "2" = "African American",
+      "3" = "Hispanic/Latino",
+      "4" = "Asian",
+      "5" = "Native American",
+      "6" = "Pacific Islander",
+      "7" = "Other",
+      "8" = "Mixed Race"
+    )
+  )
+
+# Count frequencies and calculate percentages
+ethnicity_summary <- ethnicity_long %>%
+  count(Baseline_race_ethnicity) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+# Print the table
+print(ethnicity_summary)
+```
+```{r}
+library(jmv)
+#Correlation Matrix 
+
+options(digits=2)
+jmv::corrMatrix(
+  data = thesis_small,
+  vars = c("Baseline_vgse_mean", "pos_imm_mean","race_dum","total_relationship_years","Sex","Baseline_age_R"),
+  flag=TRUE, sig=TRUE, n=TRUE)
+
+```
+
+
+```{r}
+##APIM 
+
+# ======================================================
+# FROM indiv_small → 4 dyad/pairwise datasets
+#   dyad_wide_dist        (M/F wide; heterosexual only)
+#   dyad_wide_indist      (actor/partner wide; all couples)
+#   pairwise_long_dist    (M/F long; heterosexual only)
+#   pairwise_long_indist  (actor/partner long; all couples)
+# ======================================================
+
+##Transforming it into dyadic data 
+
+library(dplyr)
+library(tidyr)
+
+id_col     <- "CoupleID"
+person_col <- "Participant"
+
+# ---------------------------
+# 1) Base long Dataset (2 rows per dyad who participated together)
+# ---------------------------
+dyad_long_base <- thesis_small %>%
+  dplyr::group_by(.data[[id_col]]) %>%
+  dplyr::filter(dplyr::n() == 2) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(.data[[id_col]], .data[[person_col]]) %>%
+  dplyr::distinct(.data[[id_col]], .data[[person_col]], .keep_all = TRUE) %>%
+  dplyr::mutate(
+    sex = dplyr::if_else(is.na(Sex), NA_character_,
+                         dplyr::if_else(as.integer(Sex) == 1L, "Male", "Female")),
+    fem = dplyr::if_else(is.na(Sex), NA_integer_,
+                         dplyr::if_else(as.integer(Sex) == 2L, 1L, 0L))
+  )
+
+# ---------------------------
+# 2) Distinguishable DYADIC (wide; heterosexual only)
+# ---------------------------
+dyad_wide_dist <- dyad_long_base %>%
+  dplyr::filter(!is.na(fem)) %>%
+  dplyr::group_by(.data[[id_col]]) %>%
+  dplyr::filter(sum(fem, na.rm = TRUE) == 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(role = dplyr::if_else(sex == "Female", "F", "M")) %>%
+  tidyr::pivot_wider(
+    id_cols    = dplyr::all_of(id_col),
+    names_from = role,
+    values_from = -dplyr::all_of(c(id_col, "role")),
+    names_glue = "{.value}_{role}"
+  )
+
+message("Distinguishable dyadic (wide): ", nrow(dyad_wide_dist), " heterosexual couples")
+
+# ---------------------------
+# 3) Indistinguishable DYADIC (wide; all couples)
+# ---------------------------
+dyad_wide_indist <- dyad_long_base %>%
+  dplyr::group_by(.data[[id_col]]) %>%
+  dplyr::mutate(is_actor = .data[[person_col]] == min(.data[[person_col]], na.rm = TRUE)) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(role = dplyr::if_else(is_actor, "actor", "partner")) %>%
+  dplyr::select(-is_actor) %>%
+  tidyr::pivot_wider(
+    id_cols    = dplyr::all_of(id_col),
+    names_from = role,
+    values_from = -dplyr::all_of(c(id_col, "role")),
+    names_glue = "{.value}_{role}"
+  )
+
+message("Indistinguishable dyadic (wide): ", nrow(dyad_wide_indist), " couples (all)")
+
+# ---------------------------
+# 4) Distinguishable PAIRWISE (long; heterosexual only)
+# ---------------------------
+pairwise_long_dist <- dyad_long_base %>%
+  dplyr::filter(!is.na(fem)) %>%
+  dplyr::group_by(.data[[id_col]]) %>%
+  dplyr::filter(sum(fem, na.rm = TRUE) == 1) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(dplyr::all_of(c(id_col, person_col, "sex", "fem")), dplyr::everything()) %>%
+  dplyr::inner_join(., ., by = setNames(id_col, id_col),
+                    suffix = c("_actor", "_partner"),
+                    relationship = "many-to-many") %>%
+  dplyr::filter(.data[[paste0(person_col, "_actor")]] != .data[[paste0(person_col, "_partner")]]) %>%
+  dplyr::mutate(
+    direction = dplyr::case_when(
+      sex_actor == "Male"   & sex_partner == "Female" ~ "M→F",
+      sex_actor == "Female" & sex_partner == "Male"   ~ "F→M",
+      TRUE ~ "other"
+    ),
+    role_actor   = dplyr::if_else(fem_actor == 1L, "F", "M"),
+    role_partner = dplyr::if_else(fem_partner == 1L, "F", "M")
+  )
+
+message("Distinguishable pairwise (long): ", nrow(pairwise_long_dist),
+        " rows = 2 × ", length(unique(pairwise_long_dist[[id_col]])), " heterosexual couples")
+
+
+# ---------------------------
+# 5) Indistinguishable PAIRWISE (long; all couples)
+# ---------------------------
+pairwise_long_indist <- dyad_long_base %>%
+  dplyr::select(dplyr::all_of(c(id_col, person_col, "sex", "fem")), dplyr::everything()) %>%
+  dplyr::inner_join(., ., by = setNames(id_col, id_col),
+                    suffix = c("_actor", "_partner"),
+                    relationship = "many-to-many") %>%
+  dplyr::filter(.data[[paste0(person_col, "_actor")]] != .data[[paste0(person_col, "_partner")]]) %>%
+  dplyr::mutate(
+    role_note = paste0("actor=", sex_actor, "; partner=", sex_partner)
+  )
+
+message("Indistinguishable pairwise (long): ", nrow(pairwise_long_indist),
+        " rows = 2 × ", length(unique(pairwise_long_indist[[id_col]])), " couples (all)")
+```
+## Exporting datasets to csv
+```{r}
+library(openxlsx)
+# Save as CSV file
+write.csv(dyad_wide_dist, "dyad_wide_dist.csv", row.names = FALSE)
+
+write.xlsx(thesis_small, "thesis_small.xlsx")
+
+```
+
+# Check for mis-matched couples
+```{r}
+library(dplyr)
+mismatched_couples <- pairwise_long_indist %>%
+  dplyr::select(CoupleID, Participant_actor, Participant_partner) %>%
+  distinct() %>%
+  group_by(CoupleID) %>%
+  summarise(
+    n_participants = n(),
+    actors = paste(sort(unique(Participant_actor)), collapse = ", "),
+    partners = paste(sort(unique(Participant_partner)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  filter(n_participants != 2)  # keep only problem rows
+
+# Print result
+if(nrow(mismatched_couples) == 0){
+  message("All couples are correctly matched!")
+} else {
+  message("Warning: There are mismatched couples!")
+  print(mismatched_couples)
+}
+```
+
+## Testing for Distinguishability: Distinguishabile Dyads Run
+```{r}
+library(devtools)
+#devtools::install_github("RandiLGarcia/dyadr")
+library(dyadr)
+library(dplyr)
+library(nlme)
+
+#Distinguishable Dyads with Pairwise Dataset
+apim_pairwise_dist <- gls(
+  pos_imm_mean_actor ~ Baseline_vgse_mean_actor + Baseline_vgse_mean_partner + Sex_contrast_actor + Baseline_vgse_mean_actor*Sex_contrast_actor + Baseline_vgse_mean_partner*Sex_contrast_actor, # outcome & predictors
+  data = pairwise_long_dist,  # your long dyadic dataset
+  method = "ML",              # Maximum Likelihood
+  correlation = corCompSymm(form = ~1 | CoupleID),       # dyad-level correlation
+  weights = varIdent(form = ~1 | Sex_actor),            # allow different variance for male vs female
+  na.action = na.omit                                    # remove missing rows
+)
+summary(apim_pairwise_dist)
+logLik(apim_pairwise_dist)
+
+#Indistinguishable Dyads with Pairwise Dataset
+apim_pairwise_indist <- gls(pos_imm_mean_actor ~ Baseline_vgse_mean_actor + Baseline_vgse_mean_partner, 
+               data = pairwise_long_dist,
+               method = "ML",
+               correlation = corCompSymm (form=~1|CoupleID),
+               na.action = na.omit)
+
+summary(apim_pairwise_indist)
+logLik(apim_pairwise_indist)
+
+#Testing for Distinguishability 
+anova(apim_pairwise_indist,apim_pairwise_dist)
+
+```
+##Indistinguishable APIM without Covariate
+```{r}
+
+semAPIM_vgse_indist <- '
+
+                  pos_imm_mean_actor  ~ a*Baseline_vgse_mean_actor + p*Baseline_vgse_mean_partner
+                  pos_imm_mean_partner  ~ a*Baseline_vgse_mean_partner + p*Baseline_vgse_mean_actor
+                  Baseline_vgse_mean_actor ~ mx*1
+                  Baseline_vgse_mean_partner ~ mx*1
+                  pos_imm_mean_actor ~ iy*1
+                  pos_imm_mean_partner ~ iy*1
+                  Baseline_vgse_mean_actor ~~ vx*Baseline_vgse_mean_actor
+                  Baseline_vgse_mean_partner ~~ vx*Baseline_vgse_mean_partner
+                  pos_imm_mean_actor ~~ ve*pos_imm_mean_actor
+                  pos_imm_mean_partner ~~ ve*pos_imm_mean_partner
+                  Baseline_vgse_mean_partner ~~ cx*Baseline_vgse_mean_actor
+                  pos_imm_mean_partner ~~ cy*pos_imm_mean_actor 
+                  k := p/a
+'
+
+# Change to "bootstrap = 5000" to get reliable values for the confidence interval.  
+semAPIM_vgse_indist <- sem(semAPIM_vgse_indist, fixed.x=FALSE, data = dyad_wide_indist, missing="fiml",
+             se = "boot",bootstrap= 50)
+
+summary(semAPIM_vgse_indist, fit.measures = TRUE)
+
+parameterEstimates(semAPIM_vgse_indist, standardized = TRUE)
+```
+
+##Indistinguishable APIM WITH Covariate
+```{r} 
+#Indistinguishable APIM with Covariate 
+
+IndistAPIM_VGSE_Cov <- '
+                  Baseline_vgse_mean_actor ~ cx*Baseline_Condition_actor
+                  Baseline_vgse_mean_partner ~ cx*Baseline_Condition_actor
+                  pos_imm_mean_actor  ~ a*Baseline_vgse_mean_actor +  p*Baseline_vgse_mean_partner + cy*Baseline_Condition_actor
+                  pos_imm_mean_partner  ~ a*Baseline_vgse_mean_partner +  p*Baseline_vgse_mean_actor + cy*Baseline_Condition_actor
+                  Baseline_Condition_actor ~ mc*1
+                  Baseline_vgse_mean_actor ~ mx*1
+                  Baseline_vgse_mean_partner ~ mx*1
+                  pos_imm_mean_actor ~ iy*1
+                  pos_imm_mean_partner ~ iy*1
+                  Baseline_Condition_actor ~~ vv*Baseline_Condition_actor
+                  Baseline_vgse_mean_actor ~~ vx*Baseline_vgse_mean_actor
+                  Baseline_vgse_mean_partner ~~ vx*Baseline_vgse_mean_partner
+                  pos_imm_mean_actor ~~ ve*pos_imm_mean_actor
+                  pos_imm_mean_partner ~~ ve*pos_imm_mean_partner
+                  Baseline_vgse_mean_partner ~~ cx*Baseline_vgse_mean_actor
+                  pos_imm_mean_partner ~~ cy*pos_imm_mean_actor
+                  k := p/a
+                 '
+          
+IndistAPIM_VGSE_Cov <- sem(IndistAPIM_VGSE_Cov,fixed.x=FALSE, data = dyad_wide_indist,missing="fiml")
+summary(IndistAPIM_VGSE_Cov, fit.measures = TRUE)
+parameterEstimates(IndistAPIM_VGSE_Cov, standardized = TRUE)
+summary(IndistAPIM_VGSE_Cov, standardized = TRUE, rsquare = TRUE)
+
+```
+
+### Indistinguishable APIM (Without Covariate) Visualization 
+```{r}
+#visualizing VGSE & Immersion Indistinguishable APIM without Covariate 
+
+library(semPlot)
+semPaths(semAPIM_vgse_indist,
+         fade = F, "est", layout='tree2', rotation = 2, style = "ram",
+         intercepts = F, residuals = F,
+         optimizeLatRes = T, curve = 3.1,
+         # labels and their sizes:
+         nodeLabels=c("Actor Immersion", "Partner Immersion", "Actor VGSE",
+                      "Partner VGSE"), sizeMan=18,  sizeMan2=10,
+         edge.label.position = 0.45, edge.label.cex=1.5
+        )
+
+```
+
+##Distinguishable APIM Model without Covariate 
+```{r}
+
+semAPIM_vgse_dist <- '
+               
+                  pos_imm_mean_M  ~ a1*Baseline_vgse_mean_M
+                  pos_imm_mean_F  ~ a2*Baseline_vgse_mean_F
+                  pos_imm_mean_M  ~ p12*Baseline_vgse_mean_F
+                  pos_imm_mean_F ~ p21*Baseline_vgse_mean_M
+                  pos_imm_mean_M ~ mx1*1 
+                  pos_imm_mean_F ~ mx2*1 
+                  Baseline_vgse_mean_M ~ iy1*1  
+                  Baseline_vgse_mean_F ~ iy2*1 
+                  Baseline_vgse_mean_M ~~ vx1*Baseline_vgse_mean_M
+                  Baseline_vgse_mean_F ~~ vx2*Baseline_vgse_mean_F
+                  pos_imm_mean_M ~~ ve1*pos_imm_mean_M   
+                  pos_imm_mean_F ~~ ve2*pos_imm_mean_F
+                  Baseline_vgse_mean_F ~~ cx*Baseline_vgse_mean_M
+                  pos_imm_mean_F ~~ cy*pos_imm_mean_M
+'
+
+# Estimate the model 
+semAPIM_vgse_dist <- sem(semAPIM_vgse_dist,fixed.x=FALSE, data = dyad_wide_dist, missing="fiml")
+
+# Examine the model.
+summary(semAPIM_vgse_dist, fit.measures = TRUE)
+
+parameterEstimates(semAPIM_vgse_dist, standardized = TRUE)
+
+```
+
+##Distinguishable APIM model with Covariate 
+```{r} 
+#Distinguishable APIM with Covariate 
+DistAPIM_VGSE_Cov <- '
+                  Baseline_vgse_mean_M ~ cx1*Baseline_Condition_F
+                  Baseline_vgse_mean_F ~ cx2*Baseline_Condition_F
+                  pos_imm_mean_M  ~ a1*Baseline_vgse_mean_M +  p12*Baseline_vgse_mean_F + cy1*Baseline_Condition_F
+                  pos_imm_mean_F  ~ a2*Baseline_vgse_mean_F +  p21*Baseline_vgse_mean_M + cy2*Baseline_Condition_F
+                  Baseline_Condition_F ~ mc*1
+                  Baseline_vgse_mean_M ~ ix1*1
+                  Baseline_vgse_mean_F ~ ix2*1
+                  pos_imm_mean_M ~ iy1*1
+                  pos_imm_mean_F ~ iy2*1
+                  Baseline_Condition_F ~~ vv*Baseline_Condition_F
+                  Baseline_vgse_mean_M ~~ vex1*Baseline_vgse_mean_M
+                  Baseline_vgse_mean_F ~~ vex2*Baseline_vgse_mean_F
+                  pos_imm_mean_M ~~ vye1*pos_imm_mean_M
+                  pos_imm_mean_F ~~ vye2*pos_imm_mean_F
+                  Baseline_vgse_mean_F ~~ cx*Baseline_vgse_mean_M
+                  pos_imm_mean_F ~~ cy*pos_imm_mean_M
+                  covXd := cx1-cx2
+                  covyd := cy1-cy2
+                  covXa := (cx1+cx2)/2
+                  covya := (cy1+cy2)/2
+                 
+'
+
+DistAPIM_VGSE_Cov <- sem(DistAPIM_VGSE_Cov,fixed.x=FALSE, data = dyad_wide_dist,missing="fiml")
+summary(DistAPIM_VGSE_Cov, fit.measures = TRUE)
+parameterEstimates(DistAPIM_VGSE_Cov, standardized = TRUE)
+summary(DistAPIM_VGSE_Cov, standardized = TRUE, rsquare = TRUE)
+```
+
+## Visualizing Distinguishable APIM (Without Covariate)
+```{r}
+
+library(semPlot)
+
+semPaths(semAPIM_vgse_dist, 
+         fade = F, "est", layout='tree2', rotation = 2, style = "ram",
+         intercepts = F, residuals = F, 
+         optimizeLatRes = T, curve = 3.1,  
+         # labels and their sizes:
+         nodeLabels=c("Men's Immersion", "Women's Immersion", "Men's VGSE",  
+                      "Women's VGSE"), sizeMan=18,  sizeMan2=10,
+         edge.label.position = 0.45, edge.label.cex=1.5
+        )
+```
+
